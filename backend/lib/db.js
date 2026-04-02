@@ -1,0 +1,13 @@
+import { neon } from '@neondatabase/serverless';
+
+let sql;
+
+export function getSql() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error('[db] DATABASE_URL is not set');
+  }
+  if (!sql) {
+    sql = neon(process.env.DATABASE_URL);
+  }
+  return sql;
+}

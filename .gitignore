@@ -1,0 +1,32 @@
+# Dependencies and builds
+**/node_modules/
+**/dist/
+**/dist-ssr/
+*.local
+
+# Environment and secrets (never commit real keys)
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Python
+**/__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.suo
+*.sw?
+
+# Local-only / large or non-repo content
+.cursor/
+Local-voxtral-output/
+not part of site/
