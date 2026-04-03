@@ -6,6 +6,27 @@ import { useSubscription } from '../hooks/useSubscription.js';
 export default function Account() {
   const { user, profile, signOut } = useAuth();
   const { subscriptionStatus, isSubscribed } = useSubscription();
+  const clerkConfigured = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+  if (!clerkConfigured) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center bg-slate-50 px-5">
+        <div className="max-w-md rounded-3xl bg-white p-6 text-center shadow-xl shadow-slate-200 ring-1 ring-slate-100">
+          <h1 className="text-xl font-black text-slate-900">Sign-in unavailable</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Configure <span className="font-mono text-xs">VITE_CLERK_PUBLISHABLE_KEY</span> in{' '}
+            <span className="font-mono text-xs">story-app/.env.local</span> to use your account page.
+          </p>
+          <Link
+            to="/"
+            className="mt-4 inline-block rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-50"
+          >
+            Back to stories
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (

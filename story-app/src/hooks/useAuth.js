@@ -12,6 +12,7 @@ export function useAuth() {
       error: null,
       getToken: async () => null,
       signUpWithEmail: async () => ({ error: 'Auth not available' }),
+      verifySignUpEmailCode: async () => ({ error: 'Auth not available' }),
       signInWithEmail: async () => ({ error: 'Auth not available' }),
       signInWithProvider: async () => ({ error: 'Auth not available' }),
       signOut: async () => ({ error: 'Auth not available' }),

@@ -8,6 +8,18 @@ import {
 import { registerAuthTokenGetter } from '../lib/authToken.js';
 import { AuthContext } from './auth-context.js';
 
+function clerkErrMessage(err) {
+  if (!err) return null;
+  const first = err.errors?.[0];
+  return (
+    first?.longMessage ||
+    first?.message ||
+    err.message ||
+    (typeof err === 'string' ? err : null) ||
+    'Request failed'
+  );
+}
+
 function AuthProviderInner({ children }) {
   const { isLoaded, isSignedIn, getToken, signOut: clerkSignOut } = useClerkAuth();
   const { user } = useUser();
@@ -73,23 +85,96 @@ function AuthProviderInner({ children }) {
       if (!signUpLoaded || !signUp) return { error: 'Auth not ready.' };
       setError(null);
       try {
-        await signUp.create({
+        const parts = fullName?.trim() ? fullName.trim().split(/\s+/) : [];
+        const firstName = parts[0] || undefined;
+        const lastName = parts.length > 1 ? parts.slice(1).join(' ') : undefined;
+
+        const { error: pwError } = await signUp.password({
           emailAddress: email,
           password,
+          ...(firstName ? { firstName } : {}),
+          ...(lastName ? { lastName } : {}),
         });
-        if (fullName) {
-          const parts = fullName.trim().split(/\s+/);
-          await signUp.update({
-            firstName: parts[0] || undefined,
-            lastName: parts.slice(1).join(' ') || undefined,
-          });
+        if (pwError) {
+          const msg = clerkErrMessage(pwError) || 'Sign up failed';
+          setError(msg);
+          return { error: msg };
         }
+
         if (signUp.status === 'complete' && signUp.createdSessionId) {
-          await setSignUpSession({ session: signUp.createdSessionId });
+          if (typeof signUp.finalize === 'function') {
+            const { error: finError } = await signUp.finalize();
+            if (finError) {
+              const msg = clerkErrMessage(finError) || 'Could not complete sign-up';
+              setError(msg);
+              return { error: msg };
+            }
+          } else {
+            await setSignUpSession({ session: signUp.createdSessionId });
+          }
+          return {};
         }
-        return {};
+
+        const unverified = signUp.unverifiedFields ?? [];
+        const emailPending = unverified.some((f) => {
+          if (f === 'email_address') return true;
+          if (typeof f === 'string') return f.includes('email');
+          return f?.name === 'email_address';
+        });
+        if (emailPending && typeof signUp.verifications?.sendEmailCode === 'function') {
+          const { error: sendErr } = await signUp.verifications.sendEmailCode();
+          if (sendErr) {
+            const msg = clerkErrMessage(sendErr) || 'Could not send verification email';
+            setError(msg);
+            return { error: msg };
+          }
+          return { needsEmailVerification: true };
+        }
+
+        const msg =
+          signUp.missingFields?.length > 0
+            ? `Sign-up needs more information (${signUp.missingFields.map((x) => x?.name || x).join(', ')}).`
+            : 'Sign-up is not complete yet. Check your email or try again.';
+        setError(msg);
+        return { error: msg };
       } catch (e) {
         const msg = e?.errors?.[0]?.message || e?.message || 'Sign up failed';
+        setError(msg);
+        return { error: msg };
+      }
+    },
+    [signUpLoaded, signUp, setSignUpSession]
+  );
+
+  const verifySignUpEmailCode = useCallback(
+    async ({ code }) => {
+      if (!signUpLoaded || !signUp) return { error: 'Auth not ready.' };
+      setError(null);
+      try {
+        const { error: vError } = await signUp.verifications.verifyEmailCode({ code });
+        if (vError) {
+          const msg = clerkErrMessage(vError) || 'Invalid code';
+          setError(msg);
+          return { error: msg };
+        }
+        if (signUp.status === 'complete' && signUp.createdSessionId) {
+          if (typeof signUp.finalize === 'function') {
+            const { error: finError } = await signUp.finalize();
+            if (finError) {
+              const msg = clerkErrMessage(finError) || 'Could not complete sign-up';
+              setError(msg);
+              return { error: msg };
+            }
+          } else {
+            await setSignUpSession({ session: signUp.createdSessionId });
+          }
+          return {};
+        }
+        const msg = 'Email verified but sign-up is not complete yet. Try again or contact support.';
+        setError(msg);
+        return { error: msg };
+      } catch (e) {
+        const msg = e?.errors?.[0]?.message || e?.message || 'Verification failed';
         setError(msg);
         return { error: msg };
       }
@@ -102,14 +187,43 @@ function AuthProviderInner({ children }) {
       if (!signInLoaded || !signIn) return { error: 'Auth not ready.' };
       setError(null);
       try {
-        const result = await signIn.create({
+        const { error: pwError } = await signIn.password({
           identifier: email,
           password,
         });
-        if (result.status === 'complete' && result.createdSessionId) {
-          await setSignInSession({ session: result.createdSessionId });
+        if (pwError) {
+          const msg = clerkErrMessage(pwError) || 'Sign in failed';
+          setError(msg);
+          return { error: msg };
         }
-        return {};
+
+        const sessionId = signIn.createdSessionId;
+        if (sessionId) {
+          if (typeof signIn.finalize === 'function') {
+            const { error: finError } = await signIn.finalize();
+            if (finError) {
+              const msg = clerkErrMessage(finError) || 'Could not complete sign-in';
+              setError(msg);
+              return { error: msg };
+            }
+          } else {
+            await setSignInSession({ session: sessionId });
+          }
+          return {};
+        }
+
+        const sf = signIn.supportedSecondFactors ?? [];
+        if (sf.length > 0) {
+          const msg =
+            'This account requires an extra sign-in step (for example two-factor authentication). Complete sign-in using your provider’s instructions, or ask an admin to adjust MFA settings.';
+          setError(msg);
+          return { error: msg };
+        }
+
+        const msg =
+          'Sign-in did not finish. If you just signed up, confirm your email from the verification message, then try again.';
+        setError(msg);
+        return { error: msg };
       } catch (e) {
         const msg = e?.errors?.[0]?.message || e?.message || 'Sign in failed';
         setError(msg);
@@ -166,10 +280,18 @@ function AuthProviderInner({ children }) {
       if (!signInLoaded || !signIn) return { error: 'Auth not ready.' };
       setError(null);
       try {
-        await signIn.create({
-          strategy: 'reset_password_email_code',
-          identifier: email,
-        });
+        const { error: createErr } = await signIn.create({ identifier: email });
+        if (createErr) {
+          const msg = clerkErrMessage(createErr) || 'Could not start reset';
+          setError(msg);
+          return { error: msg };
+        }
+        const { error: sendErr } = await signIn.resetPasswordEmailCode.sendCode();
+        if (sendErr) {
+          const msg = clerkErrMessage(sendErr) || 'Could not start reset';
+          setError(msg);
+          return { error: msg };
+        }
         return {};
       } catch (e) {
         const msg = e?.errors?.[0]?.message || e?.message || 'Could not start reset';
@@ -194,6 +316,7 @@ function AuthProviderInner({ children }) {
       loading: !isLoaded || loading,
       error,
       signUpWithEmail,
+      verifySignUpEmailCode,
       signInWithEmail,
       signInWithProvider,
       signOut,
@@ -207,6 +330,7 @@ function AuthProviderInner({ children }) {
       loading,
       error,
       signUpWithEmail,
+      verifySignUpEmailCode,
       signInWithEmail,
       signInWithProvider,
       signOut,
@@ -228,6 +352,7 @@ function AuthProviderStatic({ children }) {
       loading: false,
       error: null,
       signUpWithEmail: async () => ({ error: 'Clerk is not configured.' }),
+      verifySignUpEmailCode: async () => ({ error: 'Clerk is not configured.' }),
       signInWithEmail: async () => ({ error: 'Clerk is not configured.' }),
       signInWithProvider: async () => ({ error: 'Clerk is not configured.' }),
       signOut: async () => ({}),
